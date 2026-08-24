@@ -1,0 +1,505 @@
+// CloudN Panel — Prisma Schema
+// Control-plane data model. The future CloudN Agent is the execution plane
+// and never owns business rules — it only executes what this schema records.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Auth / Users
+// ─────────────────────────────────────────────────────────────────────────
+
+enum Role {
+  USER
+  STAFF
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+  DISABLED
+}
+
+model User {
+  id            String     @id @default(uuid())
+  email         String     @unique
+  username      String     @unique
+  passwordHash  String
+  role          Role       @default(USER)
+  status        UserStatus @default(ACTIVE)
+  planId        String?
+  plan          Plan?      @relation(fields: [planId], references: [id], onDelete: SetNull)
+  lastLoginAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  sessions      Session[]
+  servers       Server[]   @relation("ServerOwner")
+  auditLogs     AuditLog[]
+  activities    Activity[]
+
+  @@index([email])
+  @@index([username])
+}
+
+model Session {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash     String   @unique
+  userAgent     String?
+  ip            String?
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Plans
+// ─────────────────────────────────────────────────────────────────────────
+
+enum BillingInterval {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  ONE_TIME
+}
+
+enum EggAccessMode {
+  ALL
+  ALLOW_LIST
+}
+
+enum NodeAccessMode {
+  ALL
+  ALLOW_LIST
+}
+
+model Plan {
+  id                 String          @id @default(uuid())
+  name               String
+  description        String?
+  price              Decimal         @default(0) @db.Decimal(10, 2)
+  currency           String          @default("USD")
+  billingInterval     BillingInterval @default(MONTHLY)
+
+  // Resources granted to a server created under this plan
+  cpuPercent         Int
+  ramMb              Int
+  diskMb             Int
+  swapMb             Int             @default(0)
+
+  // Account-level limits
+  maxServers         Int
+  maxDatabases       Int             @default(0)
+  maxBackups         Int             @default(0)
+  maxAllocations     Int             @default(1)
+
+  priority           Int             @default(0)
+
+  eggAccessMode      EggAccessMode   @default(ALL)
+  nodeAccessMode     NodeAccessMode  @default(ALL)
+
+  isActive           Boolean         @default(true)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  users              User[]
+  servers            Server[]
+  planEggs           PlanEgg[]
+  planNodes          PlanNode[]
+}
+
+model PlanEgg {
+  id       String @id @default(uuid())
+  planId   String
+  plan     Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  eggId    String
+  egg      Egg    @relation(fields: [eggId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, eggId])
+}
+
+model PlanNode {
+  id       String @id @default(uuid())
+  planId   String
+  plan     Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  nodeId   String
+  node     Node   @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, nodeId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Locations / Nodes / Allocations
+// ─────────────────────────────────────────────────────────────────────────
+
+model Location {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  code        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  nodes       Node[]
+}
+
+enum NodeStatus {
+  ONLINE
+  OFFLINE
+  MAINTENANCE
+  UNKNOWN
+}
+
+enum NodeProtocol {
+  HTTP
+  HTTPS
+}
+
+model Node {
+  id             String       @id @default(uuid())
+  uuid           String       @unique @default(uuid())
+  name           String
+  description    String?
+  locationId     String
+  location       Location     @relation(fields: [locationId], references: [id])
+
+  hostname       String
+  fqdn           String?
+  ipAddress      String
+  port           Int          @default(8080)
+  sftpPort       Int          @default(2022)
+  protocol       NodeProtocol @default(HTTPS)
+
+  memoryMb       Int
+  diskMb         Int
+  cpuCores       Int
+
+  status         NodeStatus   @default(UNKNOWN)
+  lastHeartbeat  DateTime?
+  agentVersion   String?
+  cpuUsage       Float?
+  memoryUsage    Float?
+  diskUsage      Float?
+
+  isEnabled        Boolean    @default(true) // disabled nodes accept no new servers and report OFFLINE
+  maintenanceReason String?
+
+  isDemo         Boolean      @default(true) // true until a real Agent registers
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  credential     NodeCredential?
+  allocations    Allocation[]
+  servers        Server[]
+  planNodes      PlanNode[]
+}
+
+// Node authentication — never user passwords. The Agent authenticates with
+// nodeId + nodeSecret, and per CLOUDN_AGENT_INTEGRATION.md §2.1 the SAME
+// secret is used in both directions (Agent -> Panel calls, and Panel ->
+// Agent calls), so it's stored as reversible ciphertext (AES-256-GCM, see
+// utils/node-credential-crypto.ts) rather than a one-way hash — a hash
+// would let the Panel verify an inbound call but could never be used to
+// construct an outbound Authorization header to the Agent. The plaintext
+// secret itself is still never returned by any API response after initial
+// creation/regeneration, and secretPreview exists so the UI can identify
+// which credential is active without ever decrypting it just to display.
+model NodeCredential {
+  id                String   @id @default(uuid())
+  nodeId            String   @unique
+  node              Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  secretCiphertext  String
+  secretPreview     String   // last 4 chars only, for identification in UI
+  createdAt         DateTime @default(now())
+  rotatedAt     DateTime?
+}
+
+enum AllocationStatus {
+  AVAILABLE
+  ASSIGNED
+}
+
+model Allocation {
+  id        String            @id @default(uuid())
+  nodeId    String
+  node      Node              @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  ip        String
+  port      Int
+  status    AllocationStatus  @default(AVAILABLE)
+
+  primaryForServerId   String? @unique
+  primaryForServer     Server? @relation("PrimaryAllocation", fields: [primaryForServerId], references: [id])
+
+  serverId  String?
+  server    Server?           @relation("ServerAllocations", fields: [serverId], references: [id])
+
+  createdAt DateTime          @default(now())
+
+  @@unique([nodeId, ip, port])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Nests / Eggs
+// ─────────────────────────────────────────────────────────────────────────
+
+model Nest {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  eggs        Egg[]
+}
+
+model Egg {
+  id                  String   @id @default(uuid())
+  nestId              String
+  nest                Nest     @relation(fields: [nestId], references: [id])
+
+  name                String
+  slug                String   @unique
+  description         String?
+  author               String?
+  version             String   @default("1.0.0")
+
+  dockerImages        Json     // { "label": "image:tag", ... }
+  defaultDockerImage  String
+
+  startupCommand      String
+  stopCommand         String   @default("stop")
+  installScript       String?
+  installContainer    String?
+
+  configFiles         Json?
+  processConfig       Json?
+  featureFlags        Json?
+
+  isBuiltIn           Boolean  @default(false)
+  isHidden            Boolean  @default(false) // hidden: stays in admin, unavailable for user server creation
+
+  // Per CLOUDN_EGG_SPEC.md §2.3: the install step may run in a different
+  // image than the runtime container. Falls back to defaultDockerImage
+  // when resolving the wire-format Egg JSON if left unset.
+  installImage        String?
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  variables           EggVariable[]
+  servers             Server[]
+  planEggs            PlanEgg[]
+}
+
+model EggVariable {
+  id             String   @id @default(uuid())
+  eggId          String
+  egg            Egg      @relation(fields: [eggId], references: [id], onDelete: Cascade)
+
+  name           String
+  displayName    String
+  description    String?
+  envVariable    String
+  defaultValue   String   @default("")
+  required       Boolean  @default(false)
+  userEditable   Boolean  @default(true)
+  adminEditable  Boolean  @default(true)
+  validationRule String?  // e.g. regex or rule string
+
+  createdAt      DateTime @default(now())
+
+  serverVariables ServerVariable[]
+
+  @@unique([eggId, envVariable])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Servers
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ServerStatus {
+  CREATING
+  INSTALLING
+  STARTING
+  ONLINE
+  STOPPING
+  OFFLINE
+  ERRORED
+  SUSPENDED
+}
+
+model Server {
+  id               String       @id @default(uuid())
+  uuid             String       @unique @default(uuid())
+  identifier       String       @unique // short public identifier, e.g. "a1b2c3d4"
+  name             String
+  description      String?
+
+  ownerId          String
+  owner            User         @relation("ServerOwner", fields: [ownerId], references: [id])
+
+  nodeId           String
+  node             Node         @relation(fields: [nodeId], references: [id])
+
+  eggId            String
+  egg              Egg          @relation(fields: [eggId], references: [id])
+
+  planId           String?
+  plan             Plan?        @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  status           ServerStatus @default(CREATING)
+
+  dockerImage      String
+  startupCommand   String
+
+  // Resource limits assigned at creation time — intentionally copied from
+  // the plan rather than referencing it live, so plan edits never silently
+  // mutate an existing server's limits.
+  cpuLimit         Int
+  ramLimitMb       Int
+  diskLimitMb      Int
+  swapMb           Int          @default(0)
+  ioPriority       Int          @default(500)
+  backupLimit      Int          @default(0)
+  databaseLimit    Int          @default(0)
+
+  suspended        Boolean      @default(false)
+
+  // When true (the default), this server's cpuLimit/ramLimitMb/diskLimitMb
+  // and allocations count toward the owner's plan quota — creating,
+  // resizing, or deleting it changes what getRemainingResources() reports.
+  // An admin can set this to false (e.g. a promotional/complimentary
+  // server, or a one-off resize that shouldn't touch the user's plan
+  // usage at all) so the server is fully excluded from quota accounting
+  // in both directions: it neither counts against the limit nor is it
+  // itself bound by the remaining-quota check when created or resized.
+  countsAgainstPlan Boolean     @default(true)
+
+  // Per CLOUDN_AGENT_INTEGRATION.md §10: the Agent runs the real SFTP
+  // server, but never generates or stores the authoritative password —
+  // the Panel provisions it and displays it to the user. Username follows
+  // the Agent's required format: "<server-id>.<panel-username>".
+  sftpUsername       String?      @unique
+  sftpPasswordHash   String?
+  sftpPasswordSetAt  DateTime?
+
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  primaryAllocation   Allocation? @relation("PrimaryAllocation")
+  allocations         Allocation[] @relation("ServerAllocations")
+
+  variables        ServerVariable[]
+  databases        Database[]
+  backups          Backup[]
+  schedules        Schedule[]
+
+  @@index([ownerId])
+  @@index([nodeId])
+  @@index([status])
+}
+
+model ServerVariable {
+  id            String       @id @default(uuid())
+  serverId      String
+  server        Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  eggVariableId String
+  eggVariable   EggVariable  @relation(fields: [eggVariableId], references: [id])
+  value         String
+
+  @@unique([serverId, eggVariableId])
+}
+
+enum DatabaseType {
+  MYSQL
+  MARIADB
+  POSTGRESQL
+}
+
+model Database {
+  id           String       @id @default(uuid())
+  serverId     String
+  server       Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  name         String
+  username     String
+  passwordHash String
+  host         String
+  port         Int
+  type         DatabaseType @default(MYSQL)
+  createdAt    DateTime     @default(now())
+}
+
+enum BackupStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model Backup {
+  id               String       @id @default(uuid())
+  serverId         String
+  server           Server       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  name             String
+  sizeBytes        BigInt       @default(0)
+  status           BackupStatus @default(PENDING)
+  storageProvider  String       @default("local")
+  createdAt        DateTime     @default(now())
+  completedAt      DateTime?
+}
+
+model Schedule {
+  id             String   @id @default(uuid())
+  serverId       String
+  server         Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  name           String
+  cronExpression String
+  enabled        Boolean  @default(true)
+  actions        Json     // ordered list of { type, payload }
+  lastRunAt      DateTime?
+  createdAt      DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Logging
+// ─────────────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id])
+  action    String
+  target    String?
+  metadata  Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([action])
+  @@index([createdAt])
+}
+
+model Activity {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  type      String
+  message   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+apps/web/dist/
+apps/api/dist/
+apps/api/public/
+*.log
