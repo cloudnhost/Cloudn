@@ -68,10 +68,6 @@ export default function Login() {
             </Link>
           </p>
         </form>
-
-        <p className="mt-4 text-center text-xs text-slate-600">
-          Demo: admin@cloudn.local / CloudN!Admin123
-        </p>
       </div>
     </div>
   );

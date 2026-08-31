@@ -136,7 +136,9 @@ export default function AdminNodes() {
                 <ResourceBar label="Memory" percent={n.memoryUsage} />
                 <ResourceBar label="Disk" percent={n.diskUsage} />
               </div>
-              {n.isDemo && <div className="mt-3 text-[10px] uppercase tracking-wide text-amber-500">Demo / Mock Provider</div>}
+              {n.usesMockProvider && (
+                <div className="mt-3 text-[10px] uppercase tracking-wide text-amber-500">Awaiting Agent Connection</div>
+              )}
 
               <div className="mt-4 flex flex-wrap gap-1.5 border-t border-white/5 pt-3">
                 <IconBtn title="Edit" onClick={() => openEdit(n)}>

@@ -11,7 +11,7 @@ import type {
 } from "./infrastructure.provider.js";
 
 // Deterministic-ish in-memory simulation of what a real CloudN Agent will
-// eventually do. This is the ONLY place demo/fake behavior lives — nothing
+// eventually do. This is the ONLY place simulated/fake behavior lives — nothing
 // outside this file should know or care that infrastructure isn't real.
 // Deleting this file (and the `mock` case in the provider factory) is the
 // entire migration path to a real Agent.
@@ -46,8 +46,9 @@ export class MockProvider implements InfrastructureProvider {
   readonly name = "mock";
 
   async getNodeStatus(nodeId: string): Promise<NodeStatusSnapshot> {
-    // Demo nodes report a believable, gently fluctuating load so the
-    // dashboard doesn't look static or obviously fake.
+    // Nodes still on the mock provider report a believable, gently
+    // fluctuating load so the dashboard doesn't look static or obviously
+    // fake.
     return {
       status: "ONLINE",
       cpuUsage: jitter(35, 20, 100),

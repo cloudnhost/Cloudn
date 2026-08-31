@@ -15,8 +15,9 @@ import { logActivity } from "../services/audit.service.js";
 export const agentRouter = Router();
 
 // §4 Node Registration — called by the Agent on startup and every
-// reconnect. Marks isDemo=false, since a real Agent has now spoken up for
-// this node (demo/mock nodes never call this).
+// reconnect. Marks usesMockProvider=false, since a real Agent has now
+// spoken up for this node (nodes still on the Mock Provider never call
+// this).
 const registerSchema = z.object({
   nodeId: z.string().min(1),
   nodeUuid: z.string().min(1),
@@ -36,7 +37,7 @@ agentRouter.post("/nodes/register", requireNodeAuth, async (req, res) => {
 
   await prisma.node.update({
     where: { id: node.id },
-    data: { isDemo: false, status: "ONLINE", lastHeartbeat: new Date() },
+    data: { usesMockProvider: false, status: "ONLINE", lastHeartbeat: new Date() },
   });
 
   await logActivity({

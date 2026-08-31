@@ -7,7 +7,7 @@ import { CloudNAgentFileProvider } from "./cloudn-agent-file.provider.js";
 
 // The ONLY place `INFRASTRUCTURE_PROVIDER` is read. Everything else depends
 // on the InfrastructureProvider / FileProvider interfaces, so flipping this
-// env var is the entire migration from demo mode to a real fleet of Agents.
+// env var is the entire migration from the mock provider to a real fleet of Agents.
 function build(): InfrastructureProvider {
   const mode = process.env.INFRASTRUCTURE_PROVIDER ?? "mock";
   switch (mode) {

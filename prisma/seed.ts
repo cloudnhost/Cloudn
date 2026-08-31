@@ -5,8 +5,24 @@ import { nanoid } from "nanoid";
 
 const prisma = new PrismaClient();
 
+// Populates starter locations/nodes/plans/eggs and two accounts to sign in
+// with right away. This is a development/staging convenience script, not
+// something that belongs in a production deploy pipeline — it creates
+// accounts with known, publicly-documented passwords. Refuses to run
+// against what looks like a production database unless explicitly forced.
+if (process.env.NODE_ENV === "production" && process.env.FORCE_SEED !== "true") {
+  console.error(
+    "Refusing to run the seed script with NODE_ENV=production.\n" +
+      "This creates accounts with known default passwords — do not run it " +
+      "against a real production database.\n" +
+      "If you really mean to (e.g. a staging environment configured with " +
+      "NODE_ENV=production), re-run with FORCE_SEED=true."
+  );
+  process.exit(1);
+}
+
 async function main() {
-  console.log("Seeding CloudN demo data...");
+  console.log("Seeding CloudN starter data...");
 
   // ── Locations ────────────────────────────────────────────────────────
   const germany = await prisma.location.upsert({
@@ -20,7 +36,7 @@ async function main() {
     create: { name: "United States", code: "US", description: "New York datacenter" },
   });
 
-  // ── Nodes (marked isDemo, will use the Mock Provider) ──────────────────
+  // ── Nodes (start out using the Mock Provider until a real Agent registers)
   async function makeNode(name: string, locationId: string, ip: string, memoryMb: number, diskMb: number, cpuCores: number) {
     const node = await prisma.node.upsert({
       where: { id: `seed-${name}` } as any,
@@ -36,7 +52,7 @@ async function main() {
         diskMb,
         cpuCores,
         status: "ONLINE",
-        isDemo: true,
+        usesMockProvider: true,
       },
     }).catch(async () =>
       prisma.node.findFirst({ where: { name } })
@@ -231,21 +247,21 @@ async function main() {
     },
   });
 
-  const demoPasswordHash = await argon2.hash("CloudN!Demo123", { type: argon2.argon2id });
-  const demo = await prisma.user.upsert({
-    where: { email: "demo@cloudn.local" },
+  const samplePasswordHash = await argon2.hash("CloudN!Sample123", { type: argon2.argon2id });
+  const sampleUser = await prisma.user.upsert({
+    where: { email: "sample@cloudn.local" },
     update: {},
     create: {
-      email: "demo@cloudn.local",
-      username: "demo",
-      passwordHash: demoPasswordHash,
+      email: "sample@cloudn.local",
+      username: "sample",
+      passwordHash: samplePasswordHash,
       role: "USER",
       status: "ACTIVE",
       planId: pro.id,
     },
   });
 
-  // ── Demo servers ─────────────────────────────────────────────────────
+  // ── Sample servers ───────────────────────────────────────────────────
   async function makeServer(name: string, ownerId: string, nodeId: string, eggId: string, planId: string, allocIndex: number, status: any) {
     const existing = await prisma.server.findFirst({ where: { name, ownerId } });
     if (existing) return existing;
@@ -282,22 +298,25 @@ async function main() {
     return server;
   }
 
-  await makeServer("Survival", demo.id, node1.id, mcJava.id, pro.id, 0, "ONLINE");
-  await makeServer("Development", demo.id, node1.id, nodeEgg.id, pro.id, 1, "OFFLINE");
+  await makeServer("Survival", sampleUser.id, node1.id, mcJava.id, pro.id, 0, "ONLINE");
+  await makeServer("Development", sampleUser.id, node1.id, nodeEgg.id, pro.id, 1, "OFFLINE");
   await makeServer("Proxy", admin.id, node2.id, mcJava.id, enterprise.id, 0, "ONLINE");
   await makeServer("Website", admin.id, node3.id, nodeEgg.id, enterprise.id, 0, "ONLINE");
 
   await prisma.activity.createMany({
     data: [
       { userId: admin.id, type: "USER_LOGIN", message: "admin logged in" },
-      { userId: demo.id, type: "SERVER_CREATED", message: 'Server "Survival" created' },
-      { userId: demo.id, type: "SERVER_STARTED", message: 'Server "Survival" started' },
+      { userId: sampleUser.id, type: "SERVER_CREATED", message: 'Server "Survival" created' },
+      { userId: sampleUser.id, type: "SERVER_STARTED", message: 'Server "Survival" started' },
     ],
   });
 
   console.log("Seed complete.");
   console.log("  admin@cloudn.local / CloudN!Admin123 (SUPER_ADMIN)");
-  console.log("  demo@cloudn.local  / CloudN!Demo123  (USER, Pro plan)");
+  console.log("  sample@cloudn.local  / CloudN!Sample123  (USER, Pro plan)");
+  console.log("");
+  console.log("⚠  These are publicly-documented starter passwords. Change them (or");
+  console.log("   delete these accounts) before this environment is reachable by anyone else.");
 }
 
 main()

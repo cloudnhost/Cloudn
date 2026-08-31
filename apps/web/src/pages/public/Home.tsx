@@ -44,7 +44,7 @@ export default function Home() {
         <div className="mx-auto max-w-6xl">
           <div className="mb-12 text-center">
             <h2 className="text-2xl font-bold text-white sm:text-3xl">Everything you need, nothing you don't</h2>
-            <p className="mt-2 text-slate-500">A hosting control plane built like a real platform, not a demo.</p>
+            <p className="mt-2 text-slate-500">A hosting control plane built like a real platform.</p>
           </div>
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
             {FEATURES.map((f) => (

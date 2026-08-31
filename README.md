@@ -72,10 +72,15 @@ cloudn/
    | Email | Password | Role |
    |---|---|---|
    | admin@cloudn.local | CloudN!Admin123 | SUPER_ADMIN |
-   | demo@cloudn.local | CloudN!Demo123 | USER (Pro plan) |
+   | sample@cloudn.local | CloudN!Sample123 | USER (Pro plan) |
 
-   plus demo locations, nodes, allocations, nests/eggs, plans, and a few
-   seeded servers.
+   plus starter locations, nodes, allocations, nests/eggs, plans, and a
+   couple of sample servers. **These are publicly-documented passwords —
+   change them (or delete the accounts) before anyone besides you can
+   reach this environment.** The seed script also refuses to run at all
+   when `NODE_ENV=production` unless you explicitly pass
+   `FORCE_SEED=true`, specifically to stop it from being run against a
+   real production database by accident.
 
 4. **Run the app** — API and frontend as two separate processes, mirroring
    how they're deployed:
@@ -139,7 +144,7 @@ filesystem simulation may reset unexpectedly. This isn't a bug to fix now —
 it naturally goes away once the real CloudN Agent (a real, stateful,
 long-running process) replaces the Mock Provider. For serverless
 deployments in the meantime, prefer a self-hosted Node process (below) if
-you need the mock console/file simulation to stay consistent during a demo.
+you need the mock console/file simulation to stay consistent across requests.
 
 ### Self-hosted (single Node process, alternative)
 
@@ -210,10 +215,10 @@ not just typed stubs:
   (§10 — the Agent posts a login attempt, the Panel checks it against the
   password hash it already stores and returns valid/invalid). A real Agent
   can call every one of these today. Node online/offline status for any
-  node with `isDemo: false` (i.e. a real Agent has registered) is
-  heartbeat-freshness based — offline once the last heartbeat exceeds
+  node with `usesMockProvider: false` (i.e. a real Agent has registered)
+  is heartbeat-freshness based — offline once the last heartbeat exceeds
   `HEARTBEAT_STALE_THRESHOLD_MS` (45s, per the spec's default) — while
-  demo/mock nodes keep using the Mock Provider's simulated status.
+  nodes still on the Mock Provider keep using its simulated status.
 - **Panel → Agent (calling out)**, `apps/api/src/providers/agent-client.ts`:
   a single low-level HTTP client implementing every REST call in §7–§12
   (server lifecycle, resize/reallocate, console token issuance, logs,

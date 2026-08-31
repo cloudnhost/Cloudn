@@ -59,7 +59,7 @@ nodesRouter.get("/", requireRole("STAFF"), async (_req, res) => {
           id: n.id, uuid: n.uuid, name: n.name, location: n.location.name, locationId: n.locationId, hostname: n.hostname,
           fqdn: n.fqdn, ipAddress: n.ipAddress, port: n.port, protocol: n.protocol,
           memoryMb: n.memoryMb, diskMb: n.diskMb, cpuCores: n.cpuCores,
-          serverCount: n._count.servers, allocationCount: n._count.allocations, isDemo: n.isDemo,
+          serverCount: n._count.servers, allocationCount: n._count.allocations, usesMockProvider: n.usesMockProvider,
           isEnabled: false, maintenanceReason: n.maintenanceReason,
           status: "OFFLINE", cpuUsage: 0, memoryUsage: 0, diskUsage: 0, lastHeartbeat: n.lastHeartbeat,
         };
@@ -69,23 +69,24 @@ nodesRouter.get("/", requireRole("STAFF"), async (_req, res) => {
           id: n.id, uuid: n.uuid, name: n.name, location: n.location.name, locationId: n.locationId, hostname: n.hostname,
           fqdn: n.fqdn, ipAddress: n.ipAddress, port: n.port, protocol: n.protocol,
           memoryMb: n.memoryMb, diskMb: n.diskMb, cpuCores: n.cpuCores,
-          serverCount: n._count.servers, allocationCount: n._count.allocations, isDemo: n.isDemo,
+          serverCount: n._count.servers, allocationCount: n._count.allocations, usesMockProvider: n.usesMockProvider,
           isEnabled: true, maintenanceReason: n.maintenanceReason,
           status: "MAINTENANCE", cpuUsage: 0, memoryUsage: 0, diskUsage: 0, lastHeartbeat: n.lastHeartbeat,
         };
       }
-      // A node with a real Agent registered (isDemo=false) reports status
-      // from heartbeat freshness per CLOUDN_AGENT_INTEGRATION.md §5 — the
-      // Panel marks it OFFLINE once its last heartbeat is older than
-      // 3×HEARTBEAT_INTERVAL_MS, rather than asking the mock provider,
-      // which only knows about demo nodes.
-      if (!n.isDemo) {
+      // A node with a real Agent registered (usesMockProvider=false)
+      // reports status from heartbeat freshness per
+      // CLOUDN_AGENT_INTEGRATION.md §5 — the Panel marks it OFFLINE once
+      // its last heartbeat is older than 3×HEARTBEAT_INTERVAL_MS, rather
+      // than asking the mock provider, which only knows about nodes still
+      // on it.
+      if (!n.usesMockProvider) {
         const isFresh = n.lastHeartbeat && Date.now() - n.lastHeartbeat.getTime() < HEARTBEAT_STALE_THRESHOLD_MS;
         return {
           id: n.id, uuid: n.uuid, name: n.name, location: n.location.name, locationId: n.locationId, hostname: n.hostname,
           fqdn: n.fqdn, ipAddress: n.ipAddress, port: n.port, protocol: n.protocol,
           memoryMb: n.memoryMb, diskMb: n.diskMb, cpuCores: n.cpuCores,
-          serverCount: n._count.servers, allocationCount: n._count.allocations, isDemo: n.isDemo,
+          serverCount: n._count.servers, allocationCount: n._count.allocations, usesMockProvider: n.usesMockProvider,
           isEnabled: true, maintenanceReason: null,
           status: isFresh ? "ONLINE" : "OFFLINE",
           cpuUsage: n.cpuUsage ?? 0, memoryUsage: n.memoryUsage ?? 0, diskUsage: n.diskUsage ?? 0,
@@ -109,7 +110,7 @@ nodesRouter.get("/", requireRole("STAFF"), async (_req, res) => {
         cpuCores: n.cpuCores,
         serverCount: n._count.servers,
         allocationCount: n._count.allocations,
-        isDemo: n.isDemo,
+        usesMockProvider: n.usesMockProvider,
         isEnabled: true,
         maintenanceReason: null,
         status: status.status,
