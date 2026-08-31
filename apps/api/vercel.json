@@ -1,7 +1,4 @@
 {
- "buildCommand": "npm run build",
- "outputDirectory": "apps/api/dist",
-
   "functions": {
     "api/index.ts": {
       "memory": 1024,
