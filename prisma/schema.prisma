@@ -195,7 +195,6 @@ model Node {
   isEnabled        Boolean    @default(true) // disabled nodes accept no new servers and report OFFLINE
   maintenanceReason String?
 
-  usesMockProvider Boolean @default(true) // true until a real Agent registers for this node
 
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
