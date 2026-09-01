@@ -132,6 +132,19 @@ can set `VITE_API_URL` correctly on the web project's first deploy — and
 expect one redeploy of the API project after the web project exists, to
 set `WEB_URL` correctly. After that, both can redeploy independently.
 
+**Prisma Client on Vercel**: Vercel caches `node_modules` between builds,
+which can leave a stale generated Prisma Client in place even though the
+schema changed — Prisma's own runtime detects this specific situation and
+throws `PrismaClientInitializationError` pointing at
+[pris.ly/d/vercel-build](https://pris.ly/d/vercel-build). The fix (already
+in place in `apps/api/package.json`) is a `postinstall` script that runs
+`prisma generate`, since `postinstall` runs as part of the dependency-
+install lifecycle Vercel always executes, regardless of its `node_modules`
+cache — a `prisma generate` living only inside a custom `build` script
+isn't sufficient on its own. If you ever see that error after changing
+`prisma/schema.prisma`, it means this step didn't run; check that
+`apps/api/package.json`'s `postinstall` script is still intact.
+
 **Known limitation on Vercel**: the Mock Provider and Mock File Provider
 (`apps/api/src/providers/mock*.ts`) hold their simulated state — console
 output, provisioning progress, the in-memory mock filesystem — in a plain
