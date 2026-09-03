@@ -158,18 +158,43 @@ nodesRouter.post("/", requireRole("ADMIN"), async (req, res) => {
   const parsed = nodeSchema.safeParse(req.body);
   if (!parsed.success) return fail(res, 400, ErrorCodes.VALIDATION_ERROR, parsed.error.issues[0].message);
 
-  const node = await prisma.node.create({ data: parsed.data });
-
-  // Node credentials are generated with CSPRNG and stored as reversible
-  // ciphertext (see utils/node-credential-crypto.ts for why a one-way hash
-  // isn't sufficient here) plus a 4-char preview for identification. The
-  // plaintext is only ever handed back over the API at creation/rotation
-  // time — never in a subsequent GET.
+  // Generate + encrypt the secret BEFORE touching the database at all. If
+  // NODE_CREDENTIAL_ENCRYPTION_KEY is misconfigured, this throws here —
+  // fast, with a clear error, and with NO node row created. (Previously
+  // the node was created first; if encryption then failed, you'd end up
+  // with a node that has no credential and can never authenticate a real
+  // Agent — exactly the bug this fixes.)
   const secret = generateSecret();
-  const secretCiphertext = encryptSecret(secret);
-  await prisma.nodeCredential.create({
-    data: { nodeId: node.id, secretCiphertext, secretPreview: secret.slice(-4) },
-  });
+  let secretCiphertext: string;
+  try {
+    secretCiphertext = encryptSecret(secret);
+  } catch (err: any) {
+    console.error("Node credential encryption failed:", err);
+    return fail(
+      res,
+      500,
+      ErrorCodes.INTERNAL,
+      "Failed to generate node credentials — check that NODE_CREDENTIAL_ENCRYPTION_KEY is set to exactly 64 hex characters (32 bytes). " +
+        "Generate one with: openssl rand -hex 32"
+    );
+  }
+
+  // Node + credential are now created atomically in one transaction —
+  // either both succeed or neither does. No more orphaned nodes with a
+  // missing credential.
+  let node;
+  try {
+    node = await prisma.$transaction(async (tx) => {
+      const created = await tx.node.create({ data: parsed.data });
+      await tx.nodeCredential.create({
+        data: { nodeId: created.id, secretCiphertext, secretPreview: secret.slice(-4) },
+      });
+      return created;
+    });
+  } catch (err: any) {
+    console.error("Node creation transaction failed:", err);
+    return fail(res, 500, ErrorCodes.INTERNAL, "Failed to create node. Check server logs for details.");
+  }
 
   await logAudit({ actorId: req.user!.id, action: "NODE_CREATED", target: node.id, ip: req.ip });
 
@@ -198,7 +223,21 @@ nodesRouter.post("/:id/regenerate-secret", requireRole("ADMIN"), async (req, res
   if (!node) return fail(res, 404, ErrorCodes.NOT_FOUND, "Node not found");
 
   const secret = generateSecret();
-  const secretCiphertext = encryptSecret(secret);
+  let secretCiphertext: string;
+  try {
+    secretCiphertext = encryptSecret(secret);
+  } catch (err: any) {
+    console.error("Node credential encryption failed:", err);
+    return fail(
+      res,
+      500,
+      ErrorCodes.INTERNAL,
+      "Failed to generate node credentials — check that NODE_CREDENTIAL_ENCRYPTION_KEY is set to exactly 64 hex characters (32 bytes)."
+    );
+  }
+
+  // upsert here doubles as the repair path for any node created before
+  // this fix that ended up with no credential row at all.
   await prisma.nodeCredential.upsert({
     where: { nodeId: node.id },
     update: { secretCiphertext, secretPreview: secret.slice(-4), rotatedAt: new Date() },

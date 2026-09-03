@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Upload, EyeOff, Eye, Copy, Trash2, Pencil } from "lucide-react";
+import { Plus, Upload, EyeOff, Eye, Copy, Trash2, Pencil, FolderPlus } from "lucide-react";
 import { api, ApiError } from "../../lib/api";
 import { PageHeader, Loading, Modal } from "../../components/ui";
 
@@ -13,14 +13,27 @@ const emptyForm = {
   startupCommand: "",
 };
 
+const emptyNestForm = { name: "", slug: "", description: "" };
+
+function slugify(name: string) {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
 export default function AdminEggs() {
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [nestOpen, setNestOpen] = useState(false);
   const [editingEgg, setEditingEgg] = useState<any>(null);
   const [importJson, setImportJson] = useState("");
   const [form, setForm] = useState<any>(emptyForm);
+  const [nestForm, setNestForm] = useState(emptyNestForm);
   const [error, setError] = useState<string | null>(null);
+  const [nestError, setNestError] = useState<string | null>(null);
 
   const { data: nests, isLoading } = useQuery({
     queryKey: ["nests-admin"],
@@ -36,6 +49,23 @@ export default function AdminEggs() {
     qc.invalidateQueries({ queryKey: ["nests-admin"] });
     qc.invalidateQueries({ queryKey: ["eggs-admin"] });
   };
+
+  const createNest = useMutation({
+    mutationFn: () => api.post("/nests", nestForm),
+    onSuccess: () => {
+      invalidate();
+      setNestOpen(false);
+      setNestForm(emptyNestForm);
+      setNestError(null);
+    },
+    onError: (e) => setNestError(e instanceof ApiError ? e.message : "Failed to create nest"),
+  });
+
+  const deleteNest = useMutation({
+    mutationFn: (id: string) => api.delete(`/nests/${id}`),
+    onSuccess: invalidate,
+    onError: (e) => alert(e instanceof ApiError ? e.message : "Failed to delete nest"),
+  });
 
   const create = useMutation({
     mutationFn: () => api.post("/eggs", { ...form, dockerImages: { default: form.defaultDockerImage }, variables: [] }),
@@ -116,7 +146,10 @@ export default function AdminEggs() {
         title="Eggs"
         subtitle="Nests and their eggs — define how servers are created and run"
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <button className="btn-secondary" onClick={() => setNestOpen(true)}>
+              <FolderPlus size={15} /> Create Nest
+            </button>
             <button className="btn-secondary" onClick={() => setImportOpen(true)}>
               <Upload size={15} /> Import JSON
             </button>
@@ -139,7 +172,19 @@ export default function AdminEggs() {
         <div className="space-y-6">
           {nests?.map((nest) => (
             <div key={nest.id}>
-              <h2 className="mb-3 text-sm font-semibold text-slate-300">{nest.name}</h2>
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-slate-300">{nest.name}</h2>
+                {eggsByNest(nest.id).length === 0 && (
+                  <button
+                    className="text-xs text-slate-500 hover:text-red-400"
+                    onClick={() => {
+                      if (confirm(`Delete empty nest "${nest.name}"?`)) deleteNest.mutate(nest.id);
+                    }}
+                  >
+                    Delete Nest
+                  </button>
+                )}
+              </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
                 {eggsByNest(nest.id).map((egg: any) => (
                   <div key={egg.id} className={`card p-4 ${egg.isHidden ? "opacity-60" : ""}`}>
@@ -181,8 +226,61 @@ export default function AdminEggs() {
               </div>
             </div>
           ))}
+          {(!nests || nests.length === 0) && (
+            <p className="text-sm text-slate-500">No nests yet — create one below to start adding eggs.</p>
+          )}
         </div>
       )}
+
+      <Modal open={nestOpen} onClose={() => setNestOpen(false)} title="Create Nest">
+        <div className="space-y-3">
+          {nestError && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">{nestError}</div>
+          )}
+          <div>
+            <label className="label">Name</label>
+            <input
+              className="input"
+              value={nestForm.name}
+              onChange={(e) => {
+                const name = e.target.value;
+                // Keep slug in sync with name unless the admin has already
+                // customized the slug by hand.
+                setNestForm((f) => ({
+                  ...f,
+                  name,
+                  slug: f.slug === slugify(f.name) ? slugify(name) : f.slug,
+                }));
+              }}
+              placeholder="Applications"
+            />
+          </div>
+          <div>
+            <label className="label">Slug</label>
+            <input
+              className="input"
+              value={nestForm.slug}
+              onChange={(e) => setNestForm({ ...nestForm, slug: e.target.value })}
+              placeholder="applications"
+            />
+          </div>
+          <div>
+            <label className="label">Description (optional)</label>
+            <input
+              className="input"
+              value={nestForm.description}
+              onChange={(e) => setNestForm({ ...nestForm, description: e.target.value })}
+            />
+          </div>
+          <button
+            className="btn-primary w-full"
+            disabled={createNest.isPending || !nestForm.name || !nestForm.slug}
+            onClick={() => createNest.mutate()}
+          >
+            Create Nest
+          </button>
+        </div>
+      </Modal>
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Create Egg" wide>
         <EggForm form={form} setForm={setForm} nests={nests} error={error} showSlugAndNest />
@@ -250,17 +348,36 @@ function EggForm({ form, setForm, nests, error, showSlugAndNest }: any) {
       </div>
       <div>
         <label className="label">Docker Image</label>
-        <input className="input font-mono text-xs" value={form.defaultDockerImage} onChange={(e: any) => setForm({ ...form, defaultDockerImage: e.target.value })} placeholder="ghcr.io/cloudn/image:tag" />
+        <input
+          className="input font-mono text-xs"
+          value={form.defaultDockerImage}
+          onChange={(e: any) => setForm({ ...form, defaultDockerImage: e.target.value })}
+          placeholder="ghcr.io/cloudn/image:tag"
+        />
       </div>
       <div>
         <label className="label">Startup Command</label>
-        <input className="input font-mono text-xs" value={form.startupCommand} onChange={(e: any) => setForm({ ...form, startupCommand: e.target.value })} />
+        <input
+          className="input font-mono text-xs"
+          value={form.startupCommand}
+          onChange={(e: any) => setForm({ ...form, startupCommand: e.target.value })}
+        />
       </div>
     </div>
   );
 }
 
-function IconBtn({ children, onClick, title, danger }: { children: React.ReactNode; onClick: () => void; title: string; danger?: boolean }) {
+function IconBtn({
+  children,
+  onClick,
+  title,
+  danger,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  title: string;
+  danger?: boolean;
+}) {
   return (
     <button
       title={title}
